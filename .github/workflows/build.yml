@@ -1,4 +1,4 @@
-name: Build Windows (Tauri v2)
+name: Build Windows Portable (.exe)
 on:
   workflow_dispatch:
 
@@ -8,13 +8,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 18
 
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@stable
 
       - name: Expand project from zip
         shell: pwsh
@@ -29,19 +27,17 @@ jobs:
           node -e "const fs=require('fs'),p='src-tauri/tauri.conf.json';
           const j=JSON.parse(fs.readFileSync(p,'utf8'));
           if(!j.identifier) j.identifier='com.dynastydesktop.app';
-          if(j.bundle && 'identifier' in j.bundle){ delete j.bundle.identifier }
+          if(j.bundle && 'identifier' in j.bundle) delete j.bundle.identifier;
           fs.writeFileSync(p, JSON.stringify(j,null,2)); console.log('identifier:', j.identifier)"
 
       - name: Install deps
-        shell: pwsh
-        run: |
-          if (Test-Path package-lock.json) { npm ci } else { npm i }
+        run: npm ci || npm i
 
-      - name: Build (portable .exe)
-        run: npx --yes @tauri-apps/cli@latest build --bundles app
+      - name: Build (no bundle) → portable .exe
+        run: npx --yes @tauri-apps/cli@latest build --no-bundle
 
-      - name: Upload bundle
+      - name: Upload portable exe
         uses: actions/upload-artifact@v4
         with:
-          name: tauri-bundle
-          path: src-tauri/target/release/bundle/**/*
+          name: portable-exe
+          path: src-tauri/target/release/*.exe
