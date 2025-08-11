@@ -1,0 +1,29 @@
+name: Tauri Build
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Extract zipped project
+        shell: powershell
+        run: |
+          Expand-Archive -Path dynasty-desktop.zip -DestinationPath .
+          Copy-Item "dynasty-desktop\*" . -Recurse -Force
+          Remove-Item "dynasty-desktop" -Recurse
+
+      - uses: tauri-apps/tauri-action@v2
+        with:
+          projectPath: .
+          args: "--target x86_64-pc-windows-msvc"
+
+      - uses: actions/upload-artifact@v3
+        with:
+          name: tauri-bundle
+          path: |
+            src-tauri/target/release/bundle
