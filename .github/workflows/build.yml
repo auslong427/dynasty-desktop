@@ -1,4 +1,4 @@
-name: Build Windows (Tauri)
+name: Build Windows (Tauri v2)
 on:
   workflow_dispatch:
 
@@ -19,24 +19,26 @@ jobs:
       - name: Expand project from zip
         shell: pwsh
         run: |
-          Remove-Item -Recurse -Force src,src-tauri -ErrorAction SilentlyContinue
+          if (Test-Path src) { Remove-Item -Recurse -Force src }
+          if (Test-Path src-tauri) { Remove-Item -Recurse -Force src-tauri }
           Expand-Archive -Path dynasty-desktop.zip -DestinationPath . -Force
 
-      - name: Ensure Tauri identifier (works for v1 & v2)
+      - name: Fix Tauri v2 identifier (top-level only)
         shell: pwsh
         run: >
-          node -e "const fs=require('fs');const p='src-tauri/tauri.conf.json';
+          node -e "const fs=require('fs'),p='src-tauri/tauri.conf.json';
           const j=JSON.parse(fs.readFileSync(p,'utf8'));
           if(!j.identifier) j.identifier='com.dynastydesktop.app';
-          j.bundle=j.bundle||{};
-          if(!j.bundle.identifier) j.bundle.identifier=j.identifier;
-          fs.writeFileSync(p, JSON.stringify(j,null,2)); console.log('identifier:', j.identifier);"
+          if(j.bundle && 'identifier' in j.bundle){ delete j.bundle.identifier }
+          fs.writeFileSync(p, JSON.stringify(j,null,2)); console.log('identifier:', j.identifier)"
 
-      - name: Install frontend deps
-        run: npm install
+      - name: Install deps
+        shell: pwsh
+        run: |
+          if (Test-Path package-lock.json) { npm ci } else { npm i }
 
-      - name: Build Tauri (CLI)
-        run: npx --yes @tauri-apps/cli@latest build
+      - name: Build (portable .exe)
+        run: npx --yes @tauri-apps/cli@latest build --bundles app
 
       - name: Upload bundle
         uses: actions/upload-artifact@v4
