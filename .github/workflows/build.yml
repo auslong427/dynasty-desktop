@@ -21,19 +21,27 @@ jobs:
           if (Test-Path src-tauri) { Remove-Item -Recurse -Force src-tauri }
           Expand-Archive -Path dynasty-desktop.zip -DestinationPath . -Force
 
-      - name: Fix Tauri v2 identifier (top-level only)
+      - name: Fix Tauri v2 config (identifier + assets path)
         shell: pwsh
         run: >
           node -e "const fs=require('fs'),p='src-tauri/tauri.conf.json';
           const j=JSON.parse(fs.readFileSync(p,'utf8'));
-          if(!j.identifier) j.identifier='com.dynastydesktop.app';
+          // identifier: top-level only, and not ending with .app
+          if(!j.identifier || /\.app$/.test(j.identifier)) j.identifier='com.dynastydesktop.desktop';
           if(j.bundle && 'identifier' in j.bundle) delete j.bundle.identifier;
-          fs.writeFileSync(p, JSON.stringify(j,null,2)); console.log('identifier:', j.identifier)"
+          // ensure frontendDist points to root dist (where Vite builds)
+          j.build=j.build||{};
+          j.build.frontendDist='../dist';
+          fs.writeFileSync(p, JSON.stringify(j,null,2));
+          console.log('identifier:', j.identifier, 'frontendDist:', j.build.frontendDist);"
 
       - name: Install deps
         run: npm ci || npm i
 
-      - name: Build (no bundle) → portable .exe
+      - name: Build web assets
+        run: npm run build
+
+      - name: Build Tauri (portable exe, no bundling)
         run: npx --yes @tauri-apps/cli@latest build --no-bundle
 
       - name: Upload portable exe
