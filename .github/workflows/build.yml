@@ -1,5 +1,4 @@
-name: Tauri Build
-
+name: Build Windows (Tauri)
 on:
   workflow_dispatch:
 
@@ -9,18 +8,38 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Extract zipped project
-        shell: powershell
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Expand project from zip
+        shell: pwsh
         run: |
+          Remove-Item -Recurse -Force src,src-tauri -ErrorAction SilentlyContinue
           Expand-Archive -Path dynasty-desktop.zip -DestinationPath . -Force
 
-      - uses: tauri-apps/tauri-action@v0.5.22
-        with:
-          projectPath: .
-          args: "--target x86_64-pc-windows-msvc"
+      - name: Ensure Tauri identifier (works for v1 & v2)
+        shell: pwsh
+        run: >
+          node -e "const fs=require('fs');const p='src-tauri/tauri.conf.json';
+          const j=JSON.parse(fs.readFileSync(p,'utf8'));
+          if(!j.identifier) j.identifier='com.dynastydesktop.app';
+          j.bundle=j.bundle||{};
+          if(!j.bundle.identifier) j.bundle.identifier=j.identifier;
+          fs.writeFileSync(p, JSON.stringify(j,null,2)); console.log('identifier:', j.identifier);"
 
-      - uses: actions/upload-artifact@v4
+      - name: Install frontend deps
+        run: npm install
+
+      - name: Build Tauri (CLI)
+        run: npx --yes @tauri-apps/cli@latest build
+
+      - name: Upload bundle
+        uses: actions/upload-artifact@v4
         with:
           name: tauri-bundle
-          path: |
-            src-tauri/target/release/bundle
+          path: src-tauri/target/release/bundle/**/*
