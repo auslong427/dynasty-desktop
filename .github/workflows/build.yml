@@ -1,3 +1,11 @@
+- name: Install NSIS
+  run: choco install nsis -y
+
+# Build an NSIS installer (.exe)
+- name: Build NSIS installer
+  run: npx --yes @tauri-apps/cli@latest build --bundles nsis
+
+
 name: Build Windows Portable (.exe)
 on:
   workflow_dispatch:
