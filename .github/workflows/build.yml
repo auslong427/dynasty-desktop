@@ -1,55 +1,94 @@
-- name: Install NSIS
-  run: choco install nsis -y
-
-# Build an NSIS installer (.exe)
-- name: Build NSIS installer
-  run: npx --yes @tauri-apps/cli@latest build --bundles nsis
-
-
-name: Build Windows Portable (.exe)
+name: Build Windows (Portable + NSIS)
 on:
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
+    timeout-minutes: 20
 
-      - uses: actions/setup-node@v4
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
           node-version: 18
 
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Setup Rust (stable MSVC)
+        uses: dtolnay/rust-toolchain@stable
 
+      # ---- Unpack your project zip into the workspace root ----
       - name: Expand project from zip
         shell: pwsh
         run: |
           if (Test-Path src) { Remove-Item -Recurse -Force src }
           if (Test-Path src-tauri) { Remove-Item -Recurse -Force src-tauri }
+          if (!(Test-Path "dynasty-desktop.zip")) {
+            Write-Error "dynasty-desktop.zip not found in repo root"; exit 1
+          }
           Expand-Archive -Path dynasty-desktop.zip -DestinationPath . -Force
 
-      - name: Fix Tauri v2 config (identifier + assets path)
+      # Handle zips that unwrap into an inner folder (e.g. dynasty-desktop/...)
+      - name: Normalize extract path
+        shell: pwsh
+        run: |
+          if (!(Test-Path "src-tauri/tauri.conf.json")) {
+            $cand = Get-ChildItem -Directory | Where-Object {
+              Test-Path (Join-Path $_.FullName "src-tauri/tauri.conf.json")
+            } | Select-Object -First 1
+            if ($cand) {
+              Write-Host "Moving files from inner folder: $($cand.FullName)"
+              Copy-Item "$($cand.FullName)\*" . -Recurse -Force
+            }
+          }
+
+      - name: Show project root
+        shell: pwsh
+        run: |
+          Write-Host "Root files:"; Get-ChildItem -Force | Select-Object Name,Mode,Length
+          if (Test-Path src-tauri/tauri.conf.json) {
+            Write-Host "`nCurrent tauri.conf.json:"; Get-Content src-tauri/tauri.conf.json
+          }
+
+      # ---- Tauri v2 config fixes: identifier (top-level only) + assets path ----
+      - name: Fix Tauri v2 config
         shell: pwsh
         run: >
           node -e "const fs=require('fs'),p='src-tauri/tauri.conf.json';
+          if(!fs.existsSync(p)) {throw new Error('Missing src-tauri/tauri.conf.json')}
           const j=JSON.parse(fs.readFileSync(p,'utf8'));
-          // identifier: top-level only, and not ending with .app
-          if(!j.identifier || /\.app$/.test(j.identifier)) j.identifier='com.dynastydesktop.desktop';
+          // 1) Top-level identifier (v2): must exist, and not end with .app
+          if(!j.identifier || /\.app$/.test(j.identifier)) j.identifier='com.dynasty.desktop';
+          // remove any legacy bundle.identifier (invalid in v2)
           if(j.bundle && 'identifier' in j.bundle) delete j.bundle.identifier;
-          // ensure frontendDist points to root dist (where Vite builds)
+          // 2) Make sure Tauri can find built assets from Vite:
+          // Vite builds to ./dist, but Tauri resolves frontendDist from src-tauri/
           j.build=j.build||{};
-          j.build.frontendDist='../dist';
+          j.build.frontendDist='../dist';          // point to root/dist
+          j.build.beforeBuildCommand='npm run build';
           fs.writeFileSync(p, JSON.stringify(j,null,2));
           console.log('identifier:', j.identifier, 'frontendDist:', j.build.frontendDist);"
 
+      # ---- Install and build web assets (Vite) ----
       - name: Install deps
         run: npm ci || npm i
 
       - name: Build web assets
         run: npm run build
 
-      - name: Build Tauri (portable exe, no bundling)
+      # Optional safety net: also mirror dist into src-tauri/dist if some plugin expects it
+      - name: Mirror assets for tools that expect src-tauri/dist
+        shell: pwsh
+        run: |
+          if (Test-Path dist) {
+            New-Item -ItemType Directory -Force -Path src-tauri/dist | Out-Null
+            Copy-Item "dist\*" "src-tauri\dist" -Recurse -Force
+          }
+
+      # ---- Build portable .exe (no installer) ----
+      - name: Build portable .exe (no bundle)
         run: npx --yes @tauri-apps/cli@latest build --no-bundle
 
       - name: Upload portable exe
@@ -57,3 +96,27 @@ jobs:
         with:
           name: portable-exe
           path: src-tauri/target/release/*.exe
+
+      # ---- Build NSIS installer (.exe) ----
+      - name: Install NSIS
+        run: choco install nsis -y
+
+      - name: Build NSIS installer
+        run: npx --yes @tauri-apps/cli@latest build --bundles nsis
+        continue-on-error: true   # don’t block portable .exe delivery if NSIS hiccups
+
+      - name: Upload NSIS installer
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nsis-installer
+          path: src-tauri/target/release/bundle/nsis/**/*.exe
+
+      - name: List outputs
+        if: always()
+        shell: pwsh
+        run: |
+          Write-Host "`nPortable binaries:"
+          Get-ChildItem src-tauri/target/release/*.exe -ErrorAction SilentlyContinue
+          Write-Host "`nNSIS bundle:"
+          Get-ChildItem src-tauri/target/release/bundle/nsis -Recurse -ErrorAction SilentlyContinue
